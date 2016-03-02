@@ -1,0 +1,254 @@
+#!/usr/bin/python3
+import configparser
+config = configparser.ConfigParser()
+config.read("discourseBadgeCreator.yml")
+
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
+import urllib.parse
+import pprint
+pp = pprint.PrettyPrinter(indent=4)
+
+# STUFF TO MOVE TO config.yml
+API_USERNAME = config['DEFAULT']['API_USERNAME']
+
+API_KEY = config['DEFAULT']['API_KEY']
+DISCOURSE_URL = config['DEFAULT']['DISCOURSE_URL']
+APPROVAL_GROUP = config['DEFAULT']['APPROVAL_GROUP']
+TAG_CATEGORY = config['DEFAULT']['TAG_CATEGORY']
+BADGE_GROUPING_ID = config['DEFAULT']['BADGE_GROUPING_ID']
+
+
+ALLOW_TITLE = config['DEFAULT']['ALLOW_TITLE']
+MULTIPLE_GRANT = config['DEFAULT']['MULTIPLE_GRANT']
+LISTABLE = config['DEFAULT']['LISTABLE']
+AUTO_REVOKE = config['DEFAULT']['AUTO_REVOKE']
+SHOW_POSTS = config['DEFAULT']['SHOW_POSTS']
+TARGET_POSTS = config['DEFAULT']['TARGET_POSTS']
+BADGE_ENABLED = config['DEFAULT']['BADGE_ENABLED']
+LIKES_FOR_GOLD = config['DEFAULT']['LIKES_FOR_GOLD']
+TRIGGER = config['DEFAULT']['TRIGGER']
+
+# END config.yml
+
+
+url = DISCOURSE_URL + '/admin/badges'
+
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("title", help="Badge title")
+parser.add_argument("icon", help="Icon for badge")
+parser.add_argument("tag", help="Post tag required for badge")
+parser.add_argument("--group", help="Group name for approvals", default=APPROVAL_GROUP)
+parser.add_argument("--enabled", help="Whether badges should be enabled when created", 
+                    default=BADGE_ENABLED)
+parser.add_argument("--groupID", help="Grouping ID for badge", default=BADGE_GROUPING_ID)
+parser.add_argument("--multiple", help="Allow badge to be given multiple times", default=MULTIPLE_GRANT)
+parser.add_argument("--asTitle", help="Allow badge to be used as title", default=ALLOW_TITLE)
+parser.add_argument("--listable", help="Show badge on public badges page", default=LISTABLE)
+parser.add_argument("--revoke", help="Run revocatio daily", default=AUTO_REVOKE)
+parser.add_argument("--showPosts", help="Show post granting badge on badge page", default=SHOW_POSTS)
+parser.add_argument("--goldLikes", help="How many likes required for Gold", default=LIKES_FOR_GOLD)
+parser.add_argument("-v", type=int, help="Verbose: Print queries")
+args = parser.parse_args()
+
+tag = args.tag
+title = args.title
+icon = args.icon
+approvalGroup = args.group
+enabled = args.enabled
+badge_grouping_id = args.groupID
+likesForGold = args.goldLikes
+verbose = args.v
+
+descriptionBronze = "Post in category '{0}' with tag '{1}'.".format(TAG_CATEGORY, tag)
+descriptionSilver = "Post in category '{0}' with tag '{1}' liked by member of '{2}.".format(TAG_CATEGORY, tag, approvalGroup)
+descriptionGold = "Post in category '{0}' with tag '{1}' liked by member of '{2} and at least {3} others".format(TAG_CATEGORY, tag, approvalGroup, likesForGold)
+
+titleBronze = title
+titleSilver = title + ": Silver"
+titleGold = title + ": Golden"
+
+queryBronze = """SELECT p.user_id, min(p.created_at) granted_at, MIN(p.id) post_id
+FROM badge_posts p
+JOIN topics t ON t.id = p.topic_id
+JOIN topic_custom_fields tcf on t.id = tcf.topic_id
+WHERE category_id = ANY (
+  SELECT id FROM categories WHERE name ilike '{category}'
+) AND p.post_number = 1
+AND tcf.name LIKE 'tags' and tcf.value LIKE '{tag}'
+and (:backfill OR ( p.id IN (:post_ids) ))
+GROUP BY p.user_id
+""".format(approvalGroup=approvalGroup, category=TAG_CATEGORY, tag=tag)
+
+querySilver="""
+SELECT p.user_id, min(p.created_at) granted_at, MIN(p.id) post_id
+FROM badge_posts p
+JOIN topics t ON t.id = p.topic_id
+JOIN topic_custom_fields tcf on t.id = tcf.topic_id
+JOIN post_actions pa ON pa.post_id = p.id AND 
+      post_action_type_id = (
+                SELECT id FROM post_action_types WHERE name_key = 'like'
+       ) AND 
+       pa.user_id IN (
+           SELECT gu.user_id
+           FROM group_users gu
+           WHERE gu.group_id = ( SELECT id FROM groups WHERE name ilike '{approvalGroup}' ) 
+       )
+WHERE category_id = ANY (
+  SELECT id FROM categories WHERE name ilike '{category}'
+) AND p.post_number = 1
+AND p.like_count > 0
+AND tcf.name LIKE 'tags' and tcf.value LIKE '{tag}'
+and (:backfill OR ( p.id IN (:post_ids) ))
+GROUP BY p.user_id
+""".format(approvalGroup=approvalGroup, category=TAG_CATEGORY, tag=tag)
+
+queryGold="""
+SELECT p.user_id, min(p.created_at) granted_at, MIN(p.id) post_id
+FROM badge_posts p
+JOIN topics t ON t.id = p.topic_id
+JOIN topic_custom_fields tcf on t.id = tcf.topic_id
+JOIN post_actions pa ON pa.post_id = p.id AND 
+      post_action_type_id = (
+                SELECT id FROM post_action_types WHERE name_key = 'like'
+       ) AND 
+       pa.user_id IN (
+           SELECT gu.user_id
+           FROM group_users gu
+           WHERE gu.group_id = ( SELECT id FROM groups WHERE name ilike '{approvalGroup}' ) 
+       )
+WHERE category_id = ANY (
+  SELECT id FROM categories WHERE name ilike '{category}'
+) AND p.post_number = 1
+AND p.like_count > {likes}
+AND tcf.name LIKE 'tags' and tcf.value LIKE '{tag}'
+and (:backfill OR ( p.id IN (:post_ids) ))
+GROUP BY p.user_id
+""".format(approvalGroup=approvalGroup, category=TAG_CATEGORY, tag=tag, likes=likesForGold)
+
+valuesBronze = {'allow_title' : 'false',
+          'multiple_grant' : 'true',
+          'listable' : 'true',
+          'auto_revoke' : 'false',
+          'enabled' : enabled,
+          'show_posts' : 'true',
+          'target_posts' : 'true',
+          'icon' : icon,
+          'image' : '',
+          'name' : titleBronze,
+          'description' : descriptionBronze,
+          'query' : queryBronze,
+          'badge_grouping_id' : badge_grouping_id,
+          'trigger' : '2',
+          'badge_type_id' : '3', # 3 bronze, 2 silver, 1 gold
+          'api_username' : API_USERNAME,
+          'api_key' : API_KEY
+}
+
+valuesSilver = {'allow_title' : 'false',
+          'multiple_grant' : 'true',
+          'listable' : 'true',
+          'auto_revoke' : 'false',
+          'enabled' : enabled,
+          'show_posts' : 'true',
+          'target_posts' : 'true',
+          'icon' : icon,
+          'image' : '',
+          'name' : titleSilver,
+          'description' : descriptionSilver,
+          'query' : querySilver,
+          'badge_grouping_id' : badge_grouping_id,
+          'trigger' : '2',
+          'badge_type_id' : '2', # 3 bronze, 2 silver, 1 gold
+          'api_username' : API_USERNAME,
+          'api_key' : API_KEY
+}
+
+valuesGold = {'allow_title' : 'false',
+          'multiple_grant' : 'true',
+          'listable' : 'true',
+          'auto_revoke' : 'false',
+          'enabled' : enabled,
+          'show_posts' : 'true',
+          'target_posts' : 'true',
+          'icon' : icon,
+          'image' : '',
+          'name' : titleGold,
+          'description' : descriptionGold,
+          'query' : queryGold,
+          'badge_grouping_id' : badge_grouping_id,
+          'trigger' : '2',
+          'badge_type_id' : '1', # 3 bronze, 2 silver, 1 gold
+          'api_username' : API_USERNAME,
+          'api_key' : API_KEY
+}
+
+headers = {'content-type' : 'application/x-www-form-urlencoded; charset=UTF-8',
+           'x-requested-with' : 'XMLHttpRequest',
+           'referer' :'https://literatecomputing.com/admin/badges/new',
+           'origin' : 'https://literatecomputing.com',
+           'user-agent' : 'discourseBadgeCreator',
+           'referer' : 'https://literatecomputing.com/admin/badges/new',
+           'content-type' : 'application/x-www-form-urlencoded; charset=UTF-8'}
+
+if (verbose):
+    print("HERE GOES BRONZE:\n ")
+    pp.pprint(valuesBronze)
+
+data = urllib.parse.urlencode(valuesBronze)
+data = data.encode('ascii') 
+req = urllib.request.Request(url, data, headers)
+
+try: 
+    response = urllib.request.urlopen(req)
+    print ('"{0}" created.'.format(titleBronze))
+except HTTPError as e:
+        if e.code == 422:
+            print ("Error creating badge. Does '{0}' exist already?".format(titleBronze))
+        else:
+            print ("Darn. Response code: '{0}'".format(e.code))
+        pass
+
+if (verbose):
+    print("\n\nHERE GOES SILVER:\n ")
+    pp.pprint(valuesSilver)
+
+data = urllib.parse.urlencode(valuesSilver)
+data = data.encode('ascii') 
+req = urllib.request.Request(url, data, headers)
+
+# try: urllib.request.urlopen(req)
+# except URLError as e:    
+#     print ("\n\n--------------------YO!--------------------\n\n" , e.reason)
+#     print ("\n\nHeaders:\n\n ", e.headers)
+
+try: 
+    response = urllib.request.urlopen(req)
+    print ('"{0}" created.'.format(titleSilver))
+except HTTPError as e:
+        if e.code == 422:
+            print ("Error creating badge. Does '{0}' exist already?".format(titleSilver))
+        else:
+            print ("Darn. Response code: '{0}'".format(e.code))
+        pass
+
+
+if (verbose):
+    print("\n\nHERE GOES GOLD:\n ")
+    pp.pprint(valuesGold)
+
+data = urllib.parse.urlencode(valuesGold)
+data = data.encode('ascii') 
+req = urllib.request.Request(url, data, headers)
+
+try: 
+    response = urllib.request.urlopen(req)
+    print ('"{0}" created.'.format(titleGold))
+except HTTPError as e:
+        if e.code == 422:
+            print ("Error creating badge. Does '{0}' exist already?".format(titleGold))
+        else:
+            print ("Darn. Response code: '{0}'".format(e.code))
+        pass
+

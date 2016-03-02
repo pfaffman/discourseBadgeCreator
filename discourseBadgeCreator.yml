@@ -1,0 +1,17 @@
+[DEFAULT]
+API_USERNAME=username
+API_KEY=apikey
+DISCOURSE_URL=http://example.com/
+APPROVAL_GROUP=Leader
+TAG_CATEGORY=%%completions%%
+BADGE_GROUPING_ID=7
+ALLOW_TITLE=false
+MULTIPLE_GRANT=true
+LISTABLE=true
+AUTO_REVOKE=false
+SHOW_POSTS=true
+TARGET_POSTS=true
+BADGE_ENABLED=false
+LIKES_FOR_GOLD=3
+TRIGGER=2 # 2 == "when user edits or creates a post" DO NOT CHANGE
+
