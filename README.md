@@ -11,12 +11,14 @@ your API key and your username (from /admin/api).
 
 See discourseBadgeCreator.yml for defaults.
 
+```
 usage: discourseBadgeCreator [-h] [--group GROUP] [--enabled ENABLED]
                              [--groupID GROUPID] [--multiple MULTIPLE]
                              [--asTitle ASTITLE] [--listable LISTABLE]
                              [--revoke REVOKE] [--showPosts SHOWPOSTS]
                              [--goldLikes GOLDLIKES] [-v V]
                              title icon tag
+```
 
 For example, 
 
