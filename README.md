@@ -4,6 +4,11 @@ Python script to create sets of badges in Discourse.
 Jay Pfaffman <jay@pfaffman.com>
 License: GPL
 
+## NOTE
+
+This code was last known to work in March 2016. It probably doesn't work anymore. If you have a budget, or can make a case that I should help you for free, please feel free to contact me. I can't promise that I'll be able to help, but it
+won't hurt to ask.
+
 ## How it Works:
 
 Stick these files in a folder, edit discourseBadgeCreator.yml to have
